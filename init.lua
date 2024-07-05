@@ -105,13 +105,24 @@ minetest.register_chatcommand("delete_anti_pvp_zone", {
     end
 })
 
-minetest.register_on_player_hpchange(function(player, hp_change, reason)
-    if reason.type == "punch" or reason.type == "fall" then
-        local player_pos = player:get_pos()
-        local zone_name = isInProtectedZone(player_pos)
-        if zone_name then
-            return true, 0
+minetest.register_on_punchplayer(function(player, hitter, time_from_last_punch, tool_capabilities, dir, damage)
+    local pos1 = player:get_pos()
+    local is_protected = false
+
+    for _, zone in ipairs(protected_zones) do
+        local within_x = pos1.x >= zone.pos1.x and pos1.x <= zone.pos2.x
+        local within_y = pos1.y >= zone.pos1.y and pos1.y <= zone.pos2.y
+        local within_z = pos1.z >= zone.pos1.z and pos1.z <= zone.pos2.z
+
+        if within_x and within_y and within_z then
+            is_protected = true
+            break
         end
     end
-    return false, hp_change
+
+    if hitter and hitter:is_player() and hitter:get_player_name() ~= player:get_player_name() and not is_protected then
+        return true
+    end
+
+    return false
 end)
