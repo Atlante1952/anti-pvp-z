@@ -1,15 +1,14 @@
-local hud_id = nil
+local mod_storage = minetest.get_mod_storage()
+local protected_zones = minetest.deserialize(mod_storage:get_string("protected_zones")) or {}
+local next_zone_id = #protected_zones + 1
 
-local protected_zones = {
-    {name = "Zone1", pos = {x = 0, y = 0, z = 0}, pos2 = {x = 10, y = 10, z = 10}},
-    {name = "Zone2", pos = {x = 50, y = 0, z = 50}, pos2 = {x = 15, y = 15, z = 15}},
-}
+local hud_ids = {}
 
 local function isInProtectedZone(player_pos)
     for _, zone in ipairs(protected_zones) do
-        local within_x = player_pos.x >= zone.pos.x and player_pos.x <= zone.pos.x + zone.pos2.x
-        local within_y = player_pos.y >= zone.pos.y and player_pos.y <= zone.pos.y + zone.pos2.y
-        local within_z = player_pos.z >= zone.pos.z and player_pos.z <= zone.pos.z + zone.pos2.z
+        local within_x = player_pos.x >= zone.pos1.x and player_pos.x <= zone.pos2.x
+        local within_y = player_pos.y >= zone.pos1.y and player_pos.y <= zone.pos2.y
+        local within_z = player_pos.z >= zone.pos1.z and player_pos.z <= zone.pos2.z
 
         if within_x and within_y and within_z then
             return zone.name
@@ -19,13 +18,13 @@ local function isInProtectedZone(player_pos)
 end
 
 local function updateHUD(player)
-    local player_pos = player:getpos()
+    local player_pos = player:get_pos()
     local zone_name = isInProtectedZone(player_pos)
 
     if zone_name then
-        player:hud_change(hud_id, "text", "Zone anti-PvP : " .. zone_name)
+        player:hud_change(hud_ids[player:get_player_name()], "text", "Zone anti-PvP : " .. zone_name)
     else
-        player:hud_change(hud_id, "text", "")
+        player:hud_change(hud_ids[player:get_player_name()], "text", "")
     end
 end
 
@@ -36,7 +35,8 @@ minetest.register_globalstep(function(dtime)
 end)
 
 minetest.register_on_joinplayer(function(player)
-    hud_id = player:hud_add({
+    local player_name = player:get_player_name()
+    hud_ids[player_name] = player:hud_add({
         hud_elem_type = "text",
         position = {x = 0.95, y = 0.98},
         text = "",
@@ -46,4 +46,72 @@ minetest.register_on_joinplayer(function(player)
     })
 
     updateHUD(player)
+end)
+
+minetest.register_on_leaveplayer(function(player)
+    local player_name = player:get_player_name()
+    hud_ids[player_name] = nil
+end)
+
+minetest.register_chatcommand("anti_pvp_zone", {
+    params = "<x1> <y1> <z1> <x2> <y2> <z2>",
+    description = "Create an anti-PvP zone",
+    privs = {server = true},
+    func = function(name, param)
+        local x1, y1, z1, x2, y2, z2 = param:match("^(%S+)%s+(%S+)%s+(%S+)%s+(%S+)%s+(%S+)%s+(%S+)$")
+        if not x1 or not y1 or not z1 or not x2 or not y2 or not z2 then
+            return false, "Invalid parameters. Use: /anti_pvp_zone <x1> <y1> <z1> <x2> <y2> <z2>"
+        end
+
+        local pos1 = {x = tonumber(x1), y = tonumber(y1), z = tonumber(z1)}
+        local pos2 = {x = tonumber(x2), y = tonumber(y2), z = tonumber(z2)}
+        if not pos1 or not pos2 then
+            return false, "Invalid positions."
+        end
+
+        local zone_name = "Zone" .. next_zone_id
+        table.insert(protected_zones, {
+            id = next_zone_id,
+            name = zone_name,
+            pos1 = pos1,
+            pos2 = pos2,
+        })
+        mod_storage:set_string("protected_zones", minetest.serialize(protected_zones))
+        next_zone_id = next_zone_id + 1
+
+        return true, "Anti-PvP zone " .. zone_name .. " created."
+    end
+})
+
+minetest.register_chatcommand("delete_anti_pvp_zone", {
+    params = "<zone_id>",
+    description = "Delete an anti-PvP zone",
+    privs = {server = true},
+    func = function(name, param)
+        local zone_id = tonumber(param)
+        if not zone_id then
+            return false, "Invalid zone ID."
+        end
+
+        for i, zone in ipairs(protected_zones) do
+            if zone.id == zone_id then
+                table.remove(protected_zones, i)
+                mod_storage:set_string("protected_zones", minetest.serialize(protected_zones))
+                return true, "Anti-PvP zone " .. zone.name .. " deleted."
+            end
+        end
+
+        return false, "Zone ID not found."
+    end
+})
+
+minetest.register_on_player_hpchange(function(player, hp_change, reason)
+    if reason.type == "punch" or reason.type == "fall" then
+        local player_pos = player:get_pos()
+        local zone_name = isInProtectedZone(player_pos)
+        if zone_name then
+            return true, 0
+        end
+    end
+    return false, hp_change
 end)
